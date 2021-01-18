@@ -1,107 +1,49 @@
-import os
 import torch
-import numpy as np
-from torch.utils.data import Dataset, random_split, DataLoader
+from torch.utils.data import random_split, DataLoader
 from PIL import Image
 import torchvision.models as models
-import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
 from torchvision import datasets
-from sklearn.metrics import f1_score
 import torch.nn.functional as F
 import torch.nn as nn
-from torchvision.utils import make_grid
-from multiprocessing import Process, freeze_support
-from tqdm.notebook import tqdm
-
+from visualization import plot_lrs, plot_losses, plot_accuracies
+from device_data_loader import DeviceDataLoader
+from helper import to_device, get_default_device
 import variables
 
-stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-
-train_transforms = transforms.Compose([transforms.Resize((224,224),interpolation=Image.NEAREST),
+train_transforms = transforms.Compose([transforms.Resize((512, 512), interpolation=Image.NEAREST),
                                        transforms.RandomHorizontalFlip(),
                                        transforms.RandomVerticalFlip(),
                                        transforms.ToTensor(),
-                                       transforms.Normalize(*stats,inplace=True)
+                                       transforms.Normalize(*variables.STATS, inplace=True)
                                    ])
-test_transforms = transforms.Compose([transforms.Resize((224,224),interpolation=Image.NEAREST),
+test_transforms = transforms.Compose([transforms.Resize((512, 512), interpolation=Image.NEAREST),
                                       transforms.ToTensor(),
-                                      transforms.Normalize(*stats)
+                                      transforms.Normalize(*variables.STATS)
                                   ])
 
 dataset = datasets.ImageFolder(variables.TRAIN_DIR, transform=train_transforms)
 test_data = datasets.ImageFolder(variables.VALID_DIR, transform=test_transforms)
 
-print(dataset.classes)
-print(len(dataset))
+torch.manual_seed(variables.RANDOM_SEED)
 
-random_seed = 42
-torch.manual_seed(random_seed)
-
-val_pct = 0.1
-val_size = int(val_pct * len(dataset))
+val_size = int(variables.VAL_PCT * len(dataset))
 train_size = len(dataset) - val_size
 
 
 train_data, valid_data = random_split(dataset, [train_size, val_size])
-len(train_data), len(valid_data)
+print(len(train_data), len(valid_data))
 
-def get_default_device():
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    else:
-        return torch.device('cpu')
-
-device = get_default_device()
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(device)
 
-train_dl = DataLoader(train_data, batch_size=variables.BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-valid_dl = DataLoader(valid_data, batch_size=variables.BATCH_SIZE * 2, num_workers=2, pin_memory=True)
-test_dl = DataLoader(test_data, batch_size=variables.BATCH_SIZE, num_workers=2, pin_memory=True)
-
-
-def decode_label(label_number):
-    if label_number==0:
-        return "NORMAL"
-    return "PNEUMONIA"
-
-# def show_image(img_tuple):
-#     plt.imshow(img_tuple[0].permute(1,2,0))
-#     print("Label: ",decode_label(img_tuple[1]))
-#
-#
-# show_image(dataset[0])
-
-# def show_batch(dl, invert=False):
-#     for images, labels in dl:
-#         fig, ax = plt.subplots(figsize=(16, 8))
-#         ax.set_xticks([]); ax.set_yticks([])
-#         data = 1-images if invert else images
-#         ax.imshow(make_grid(data, nrow=16).permute(1, 2, 0))
-#         break
-#
-# show_batch(train_dl)
-    
-def to_device(data, device):
-    if isinstance(data, (list,tuple)):
-        return [to_device(x, device) for x in data]
-    return data.to(device, non_blocking=True)
-
-class DeviceDataLoader():
-    def __init__(self, dl, device):
-        self.dl = dl
-        self.device = device
-        
-    def __iter__(self):
-        for b in self.dl: 
-            yield to_device(b, self.device)
-
-    def __len__(self):
-        return len(self.dl)
+train_dl = DataLoader(train_data, batch_size=variables.BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
+valid_dl = DataLoader(valid_data, batch_size=variables.BATCH_SIZE * 2, num_workers=8, pin_memory=True)
+test_dl = DataLoader(test_data, batch_size=variables.BATCH_SIZE, num_workers=8, pin_memory=True)
 
 
 def accuracy(outputs, labels):
-    preds = [1 if pred>0.5 else 0 for pred in outputs]
+    preds = [1 if pred > 0.5 else 0 for pred in outputs]
     preds = torch.as_tensor(preds, dtype=torch.float32, device=device)
     preds = preds.view([torch.tensor(preds.shape).item(), 1])
     acc = torch.tensor(torch.sum(preds == labels).item() / len(preds), device=device)
@@ -154,17 +96,6 @@ tst_dl = DeviceDataLoader(test_dl, device)
 model = to_device(PneumoniaCnnModel(), device)
 
 
-def try_batch(dl):
-    for images, labels in dl:
-        print('images.shape:', images.shape)
-        out = model(images)
-        print('out.shape:', out.shape)
-        print('out[0]:', out[0])
-        break
-
-try_batch(trn_dl)
-
-
 @torch.no_grad()
 def evaluate(model, val_loader):
     model.eval()
@@ -186,7 +117,7 @@ def fit(epochs, max_lr, model, train_loader, val_loader, weight_decay=0, grad_cl
         model.train()
         train_losses = []
         lrs = []
-        for batch in tqdm(train_loader):
+        for batch in train_loader:
             loss = model.training_step(batch)
             train_losses.append(loss)
             loss.backward()
@@ -212,36 +143,28 @@ def fit(epochs, max_lr, model, train_loader, val_loader, weight_decay=0, grad_cl
 def predict_dl(dl, model):
     torch.cuda.empty_cache()
     batch_probs = []
-    for xb, _ in tqdm(dl):
+    for xb, _ in dl:
         probs = model(xb)
         batch_probs.append(probs.cpu().detach())
     batch_probs = torch.cat(batch_probs)
     return batch_probs
 
-def plot_lrs(history):
-    lrs = np.concatenate([x.get('lrs', []) for x in history])
-    plt.plot(lrs)
-    plt.xlabel('Batch no.')
-    plt.ylabel('Learning rate')
-    plt.title('Learning Rate vs. Batch no.')
-
 def training():
     history = [evaluate(model, val_dl)]
-
-    num_epochs = 20
-    max_lr = 1e-2
     opt_func = torch.optim.Adam
-    grad_clip = 0.1
-    weight_decay = 1e-4
 
-    history += fit(num_epochs, max_lr, model, trn_dl, val_dl, weight_decay=weight_decay, grad_clip=grad_clip,
+    history += fit(variables.NUM_EPOCHS, variables.MAX_LR, model, trn_dl, val_dl, weight_decay=variables.WEIGHT_DECAY, grad_clip=variables.GRAD_CLIP,
                    opt_func=opt_func)
 
-    torch.save(model.state_dict(), 'chest-x-ray-resnet50-model.pth')
+    plot_lrs(history)
+    plot_accuracies(history)
+    plot_losses(history)
+
+    torch.save(model.state_dict(), variables.PATH)
 
 
 def predict():
-    torch.multiprocessing.freeze_support()
+    model.load_state_dict(torch.load(variables.PATH))
     test_predictions = predict_dl(tst_dl, model)
 
     test_labels = []
@@ -250,14 +173,13 @@ def predict():
     test_labels = torch.as_tensor(test_labels, dtype=torch.float32, device=device)
     test_labels = test_labels.view([torch.tensor(test_labels.shape).item(), 1])
 
+    print(test_predictions, test_labels)
+
     test_accuracy = accuracy(test_predictions, test_labels)
     print("Test Accuracy: ", test_accuracy.item())
 
 
-def main():
-    training()
-
 if __name__ == '__main__':
-    freeze_support()
-    main()
+    training()
+    # predict()
 
