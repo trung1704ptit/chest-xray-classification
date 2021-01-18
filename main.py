@@ -11,6 +11,9 @@ from device_data_loader import DeviceDataLoader
 from helper import to_device
 import variables
 
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 train_transforms = transforms.Compose([transforms.Resize((512, 512), interpolation=Image.NEAREST),
                                        transforms.RandomHorizontalFlip(),
                                        transforms.RandomVerticalFlip(),

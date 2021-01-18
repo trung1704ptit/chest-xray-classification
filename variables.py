@@ -1,12 +1,12 @@
 DATA_DIR = 'dataset'
 TRAIN_DIR = DATA_DIR + '/train'
-VALID_DIR = DATA_DIR + '/test'
+VALID_DIR = DATA_DIR + '/val'
 PATH='resnet50-model.pth'
 
-NUM_EPOCHS = 1
+NUM_EPOCHS = 100
 RANDOM_SEED = 42
 VAL_PCT = 0.1
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 MAX_LR = 1e-2
 GRAD_CLIP = 0.1
 WEIGHT_DECAY = 1e-4
