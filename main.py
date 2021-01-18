@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from visualization import plot_lrs, plot_losses, plot_accuracies
 from device_data_loader import DeviceDataLoader
-from helper import to_device, get_default_device
+from helper import to_device
 import variables
 
 train_transforms = transforms.Compose([transforms.Resize((512, 512), interpolation=Image.NEAREST),
@@ -34,7 +34,7 @@ train_size = len(dataset) - val_size
 train_data, valid_data = random_split(dataset, [train_size, val_size])
 print(len(train_data), len(valid_data))
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
 
 train_dl = DataLoader(train_data, batch_size=variables.BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
